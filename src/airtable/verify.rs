@@ -1,12 +1,13 @@
 use crate::{
     console_error, console_log, fetch_submissions, hash_secret, update_submission, Record,
-    Response, Result, SlackOauth,
+    Response, Result, SlackOauth, VerificationSigner,
 };
 
 pub async fn verify_all_records(
     records: Vec<Record>,
     slack_oauth: &SlackOauth,
     airtable_key: &String,
+    signer: &VerificationSigner
 ) {
     for record in records {
         let otp_secret = &record.fields.otp;
@@ -22,7 +23,7 @@ pub async fn verify_all_records(
             &slack_id, &slack_username, &eligibility, &github_username, &slack_oauth.client_secret
         );
 
-        let hashed_secret = hash_secret(&secret);
+        let hashed_secret = hash_secret(&secret, signer);
 
         if *otp_secret == hashed_secret {
             match update_submission(airtable_key, record_id, true).await {
@@ -41,12 +42,13 @@ pub async fn verify_all_records(
 pub async fn initiate_record_verification(
     airtable_key: &String,
     slack_oauth: &SlackOauth,
+    signer: &VerificationSigner
 ) -> Result<Response> {
     let records = fetch_submissions(airtable_key).await.unwrap();
     if records.is_empty() {
         return Response::ok("No records to verify");
     }
 
-    verify_all_records(records, slack_oauth, airtable_key).await;
+    verify_all_records(records, slack_oauth, airtable_key, signer).await;
     Response::ok("Records verified")
 }
