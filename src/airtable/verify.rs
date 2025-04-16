@@ -1,5 +1,5 @@
 use crate::{
-    console_error, console_log, fetch_submissions, hash_secret, update_submission, Record,
+    console_error, console_log, fetch_submissions, update_submission, Record,
     Response, Result, SlackOauth, VerificationSigner,
 };
 
@@ -23,9 +23,7 @@ pub async fn verify_all_records(
             &slack_id, &slack_username, &eligibility, &github_username, &slack_oauth.client_secret
         );
 
-        let hashed_secret = hash_secret(&secret, signer);
-
-        if *otp_secret == hashed_secret {
+        if signer.verify_secret(otp_secret, &secret) {
             match update_submission(airtable_key, record_id, true).await {
                 Ok(_) => console_log!("Record updated to [Verified] successfully"),
                 Err(e) => console_error!("Failed to update record: {}", e),

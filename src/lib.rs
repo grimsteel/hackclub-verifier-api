@@ -2,12 +2,11 @@ pub mod airtable;
 pub mod github;
 pub mod slack;
 pub mod utils;
+pub mod verify;
 
-use crate::{airtable::*, github::*, slack::*};
+use crate::{airtable::*, github::*, slack::*, verify::*};
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
-use sha3::Sha3_256;
-use hmac::{Hmac, Mac};
 use worker::*;
 
 #[derive(Serialize, Deserialize)]
@@ -24,11 +23,6 @@ struct APIRequest {
     special_secret: Option<String>,
 }
 
-#[derive(Debug)]
-/// HMAC signer to verify authenticity of Eligibility, Slack ID, and Github Username fields
-pub struct VerificationSigner {
-    secret: Vec<u8>
-}
 
 fn add_cors_headers(mut response: Response) -> Result<Response> {
     let headers = response.headers_mut();
@@ -66,9 +60,7 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
     };
 
 
-    let signer = VerificationSigner {
-        secret: env.var("VERIFICATION_SIGNING_SECRET")?.to_string().into_bytes()
-    };
+    let signer = VerificationSigner::new(env.var("VERIFICATION_SIGNING_SECRET")?.to_string());
 
     let airtable_api_key = env.var("AIRTABLE_KEY")?.to_string();
 
@@ -138,7 +130,7 @@ async fn process_hash_verification(mut req: Request, slack_oauth: &SlackOauth, s
         &slack_id, &slack_username, &eligibility, &github_username, &slack_oauth.client_secret
     );
 
-    let hashed_secret = hash_secret(&secret, signer);
+    let hashed_secret = signer.hash_secret(&secret);
 
     match hashed_secret == api_request.hashed_secret {
         true => Response::ok("Hash Verified"),
@@ -184,7 +176,7 @@ async fn process_api_payload(
             slack.slack_id, slack.username, slack.eligibility, slack_oauth.client_secret
         );
 
-        temp_response.hashed_secret = hash_secret(&combined_secret, signer);
+        temp_response.hashed_secret = signer.hash_secret(&combined_secret)
     }
 
     if let (Some(slack), Some(github)) = (&temp_response.slack, &temp_response.github) {
@@ -193,18 +185,11 @@ async fn process_api_payload(
             slack.slack_id, slack.username, slack.eligibility, github.id, slack_oauth.client_secret
         );
 
-        temp_response.hashed_secret = hash_secret(&combined_secret, signer);
+        temp_response.hashed_secret = signer.hash_secret(&combined_secret);
     }
 
     let response = Response::from_json(&temp_response)?;
     add_cors_headers(response)
-}
-
-fn hash_secret(secret: &str, signer: &VerificationSigner) -> String {
-    let mut mac = Hmac::<Sha3_256>::new_from_slice(&signer.secret)
-        .expect("secret is valid");
-    mac.update(secret.as_bytes());
-    hex::encode(mac.finalize().into_bytes())
 }
 
 fn request_diagnostics(req: &Request) {
